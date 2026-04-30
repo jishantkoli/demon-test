@@ -16,7 +16,7 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     const token = authHeader.split(' ')[1];
     const decoded: any = jwt.verify(token, process.env.JWT_ACCESS_SECRET!);
     
-    const user = await User.findById(decoded.id).select('-passwordHash');
+    const user = await User.findById(decoded.id);
     if (!user) {
       return res.status(401).json({ error: 'User no longer exists' });
     }
@@ -45,7 +45,7 @@ export const optionalAuthenticate = async (req: AuthRequest, res: Response, next
     const token = authHeader.split(' ')[1];
     const decoded: any = jwt.verify(token, process.env.JWT_ACCESS_SECRET!);
     
-    const user = await User.findById(decoded.id).select('-passwordHash');
+    const user = await User.findById(decoded.id);
     if (user && user.isActive) {
       req.user = user;
     }
