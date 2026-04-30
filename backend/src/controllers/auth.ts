@@ -24,7 +24,7 @@ export const login = async (req: Request, res: Response) => {
     }
 
     console.log(`Login attempt for: ${normalizedEmail}`);
-    const user = await User.findOne({ email: normalizedEmail });
+    const user = await User.findOne({ email: normalizedEmail }).select('+passwordHash');
     
     if (!user) {
       console.log(`User not found: ${normalizedEmail}`);
