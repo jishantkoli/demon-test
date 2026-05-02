@@ -1,0 +1,3 @@
+## 2025-05-15 - Optimizing Dashboard and Listing Performance
+**Learning:** Sequential database calls in dashboard controllers (like `getStats`) can lead to significant latency as the number of metrics grows. Combining these into a single `Promise.all` with MongoDB aggregations (`$group`) reduces database round-trips from ~15 to ~5. Additionally, using `.lean()` for read-heavy listing endpoints reduces Mongoose's hydration overhead (CPU/Memory).
+**Action:** Always parallelize independent queries in controllers and use `.lean()` for read-only API responses. Ensure critical filter/sort combinations are indexed (e.g., `{ field: 1, createdAt: -1 }`).

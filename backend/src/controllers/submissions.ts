@@ -278,25 +278,27 @@ export const getSubmissions = async (req: AuthRequest, res: Response) => {
       query.userEmail = { $regex: new RegExp(`^${user_email}$`, 'i') };
     }
 
+    // BOLT OPTIMIZATION: Use .lean() to get POJOs instead of Mongoose Documents.
+    // This reduces memory overhead and speeds up the query significantly for large result sets.
     const submissions = await Submission.find(query)
       .populate('nominationId')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
       
-    const mapped = submissions.map(s => {
-      const obj = s.toObject();
+    const mapped = submissions.map((s: any) => {
       return {
-        ...obj,
-        id: obj._id,
-        form_id: obj.formId,
-        user_id: obj.userId,
-        user_name: obj.userName,
-        user_email: obj.userEmail,
-        nomination_id: obj.nominationId,
-        nomination_token: obj.nominationToken || (obj.nominationId as any)?.unique_token || null,
-        unique_token: obj.nominationToken || (obj.nominationId as any)?.unique_token || null,
-        form_title: obj.formTitle,
-        submitted_at: obj.createdAt,
-        is_draft: obj.isDraft
+        ...s,
+        id: s._id,
+        form_id: s.formId,
+        user_id: s.userId,
+        user_name: s.userName,
+        user_email: s.userEmail,
+        nomination_id: s.nominationId,
+        nomination_token: s.nominationToken || (s.nominationId as any)?.unique_token || null,
+        unique_token: s.nominationToken || (s.nominationId as any)?.unique_token || null,
+        form_title: s.formTitle,
+        submitted_at: s.createdAt,
+        is_draft: s.isDraft
       };
     });
       
@@ -310,7 +312,8 @@ export const getSubmissions = async (req: AuthRequest, res: Response) => {
 export const getSubmissionById = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const submission = await Submission.findById(id).populate('formId');
+    // BOLT OPTIMIZATION: Use .lean() for faster lookup
+    const submission = await Submission.findById(id).populate('formId').lean();
     if (!submission) return res.status(404).json({ error: 'Submission not found' });
     
     // Privacy: Teachers only see own
