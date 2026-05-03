@@ -1,0 +1,3 @@
+## 2025-05-15 - Dashboard Stats Optimization
+**Learning:** Replacing multiple sequential `countDocuments` calls with a single `aggregate` call using `$group` (or parallelizing multiple aggregations with `Promise.all`) significantly reduces database roundtrips and latency, especially as the collection size grows. For non-admin roles, ensure that filters in the `$match` stage do not inadvertently hide categories (like 'draft' or 'expired') that should still be reported as 0.
+**Action:** Use parallelized MongoDB aggregations for dashboard-style summary endpoints. Always verify that filtered queries still correctly represent all expected status categories in the final response object.
