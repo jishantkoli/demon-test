@@ -16,6 +16,11 @@ const nominationSchema = new mongoose.Schema({
   additional_data: { type: mongoose.Schema.Types.Mixed },
 }, { timestamps: true });
 
+// Bolt Optimization: Compound indexes for faster filtering and sorting
+nominationSchema.index({ functionary_id: 1, status: 1 });
+nominationSchema.index({ teacher_email: 1, form_id: 1 });
+nominationSchema.index({ form_id: 1 });
+
 // Generate unique token before saving
 nominationSchema.pre('save', function() {
   if (!this.unique_token) {
