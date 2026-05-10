@@ -1,0 +1,3 @@
+## 2025-05-22 - Optimizing Dashboard Stats with Faceted Aggregations
+**Learning:** Dashboard statistics that involve multiple `countDocuments` calls can be significantly optimized by grouping them into collection-specific aggregation pipelines using MongoDB's `$facet`. This reduces the number of database round-trips from N (one per count) to C (one per collection involved). Combining these with `Promise.all` further reduces latency by parallelizing collection-level queries.
+**Action:** Always look for patterns where multiple counts are performed on the same collection with different filters. Use `$facet` to batch these counts and `Promise.all` for multi-collection operations.
