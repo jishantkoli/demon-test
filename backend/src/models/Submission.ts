@@ -48,4 +48,11 @@ const submissionSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
+// Performance Indexes
+submissionSchema.index({ formId: 1, createdAt: -1 });
+submissionSchema.index({ userId: 1, createdAt: -1 });
+submissionSchema.index({ userEmail: 1, createdAt: -1 });
+submissionSchema.index({ status: 1, createdAt: -1 });
+submissionSchema.index({ nominationId: 1 });
+
 export const Submission = mongoose.model('Submission', submissionSchema);
