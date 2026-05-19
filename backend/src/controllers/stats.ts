@@ -17,42 +17,100 @@ export const getStats = async (req: AuthRequest, res: Response) => {
     if (role === 'admin') {
       // Admin sees everything
     } else if (role === 'teacher') {
+      // Keep this sequential as formQuery depends on it
       const nominations = await Nomination.find({ 
         teacher_email: { $regex: new RegExp(`^${email}$`, 'i') } 
-      });
+      }).select('form_id');
       const assignedFormIds = nominations.map(n => n.form_id);
       formQuery._id = { $in: assignedFormIds };
       formQuery.status = 'active';
       subQuery.userId = userId;
     } else if (role === 'functionary') {
       formQuery.status = 'active';
-      subQuery.schoolCode = req.user.school_code;
+      subQuery.schoolCode = req.user.school_code || req.user.profile?.schoolCode;
     } else if (role === 'reviewer') {
       formQuery.status = 'active';
       // Reviewers see submissions they need to review
     }
 
-    const totalUsers = await User.countDocuments();
-    const activeForms = await Form.countDocuments({ ...formQuery, status: 'active' });
-    const draftForms = await Form.countDocuments({ ...formQuery, status: 'draft' });
-    const expiredForms = await Form.countDocuments({ ...formQuery, status: 'expired' });
-    const totalSubmissions = await Submission.countDocuments(subQuery);
-    
+    // Optimize: Use parallel execution and $facet to reduce DB roundtrips from ~18 to 4
+    const [userStats, formStats, submissionStats, nominationStats] = await Promise.all([
+      // User stats in one trip
+      User.aggregate([
+        {
+          $facet: {
+            total: [{ $count: 'count' }],
+            byRole: [
+              { $group: { _id: '$role', count: { $sum: 1 } } }
+            ]
+          }
+        }
+      ]),
+      // Form stats in one trip
+      Form.aggregate([
+        { $match: formQuery },
+        {
+          $facet: {
+            active: [{ $match: { status: 'active' } }, { $count: 'count' }],
+            draft: [{ $match: { status: 'draft' } }, { $count: 'count' }],
+            expired: [{ $match: { status: 'expired' } }, { $count: 'count' }]
+          }
+        }
+      ]),
+      // Submission stats in one trip
+      Submission.aggregate([
+        { $match: subQuery },
+        {
+          $facet: {
+            total: [{ $count: 'count' }],
+            submitted: [{ $match: { status: 'submitted' } }, { $count: 'count' }],
+            under_review: [{ $match: { status: 'under_review' } }, { $count: 'count' }],
+            approved: [{ $match: { status: 'approved' } }, { $count: 'count' }],
+            rejected: [{ $match: { status: 'rejected' } }, { $count: 'count' }]
+          }
+        }
+      ]),
+      // Nomination stats (only for functionary) in one trip
+      role === 'functionary' ? Nomination.aggregate([
+        { $match: { functionary_id: userId } },
+        {
+          $facet: {
+            total: [{ $count: 'count' }],
+            pending: [{ $match: { status: 'pending' } }, { $count: 'count' }],
+            invited: [{ $match: { status: 'invited' } }, { $count: 'count' }],
+            completed: [{ $match: { status: 'completed' } }, { $count: 'count' }]
+          }
+        }
+      ]) : Promise.resolve([])
+    ]);
+
+    // Helper to extract count from $facet result
+    const getCount = (facetResult: any, key: string) => facetResult[0]?.[key]?.[0]?.count || 0;
+
+    const totalUsers = getCount(userStats, 'total');
+    const activeForms = getCount(formStats, 'active');
+    const draftForms = getCount(formStats, 'draft');
+    const expiredForms = getCount(formStats, 'expired');
+    const totalSubmissions = getCount(submissionStats, 'total');
+
     // Submissions by status
     const submissionsByStatus = {
-      submitted: await Submission.countDocuments({ ...subQuery, status: 'submitted' }),
-      under_review: await Submission.countDocuments({ ...subQuery, status: 'under_review' }),
-      approved: await Submission.countDocuments({ ...subQuery, status: 'approved' }),
-      rejected: await Submission.countDocuments({ ...subQuery, status: 'rejected' }),
+      submitted: getCount(submissionStats, 'submitted'),
+      under_review: getCount(submissionStats, 'under_review'),
+      approved: getCount(submissionStats, 'approved'),
+      rejected: getCount(submissionStats, 'rejected'),
     };
 
     // Users by role
-    const usersByRole = {
-      admin: await User.countDocuments({ role: 'admin' }),
-      reviewer: await User.countDocuments({ role: 'reviewer' }),
-      functionary: await User.countDocuments({ role: 'functionary' }),
-      teacher: await User.countDocuments({ role: 'teacher' }),
+    const usersByRole: any = {
+      admin: 0,
+      reviewer: 0,
+      functionary: 0,
+      teacher: 0
     };
+    userStats[0]?.byRole?.forEach((r: any) => {
+      if (r._id) usersByRole[r._id] = r.count;
+    });
 
     // Functionary specific stats
     let totalNominations = 0;
@@ -60,11 +118,11 @@ export const getStats = async (req: AuthRequest, res: Response) => {
     let completionRate = 0;
 
     if (role === 'functionary') {
-      totalNominations = await Nomination.countDocuments({ functionary_id: userId });
+      totalNominations = getCount(nominationStats, 'total');
       nominationsByStatus = {
-        pending: await Nomination.countDocuments({ functionary_id: userId, status: 'pending' }),
-        invited: await Nomination.countDocuments({ functionary_id: userId, status: 'invited' }),
-        completed: await Nomination.countDocuments({ functionary_id: userId, status: 'completed' }),
+        pending: getCount(nominationStats, 'pending'),
+        invited: getCount(nominationStats, 'invited'),
+        completed: getCount(nominationStats, 'completed'),
       };
       if (totalNominations > 0) {
         completionRate = Math.round((nominationsByStatus.completed / totalNominations) * 100);

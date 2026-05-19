@@ -44,7 +44,7 @@ const formSchema = new mongoose.Schema({
   description: String,
   adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   formType: { type: String, enum: ['normal', 'nomination', 'branching', 'quiz', 'multi'], default: 'normal' },
-  status: { type: String, enum: ['active', 'expired', 'draft'], default: 'draft' },
+  status: { type: String, enum: ['active', 'expired', 'draft'], default: 'draft', index: true },
   form_schema: {
     sections: [sectionSchema]
   },
