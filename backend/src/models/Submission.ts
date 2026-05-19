@@ -41,11 +41,15 @@ const submissionSchema = new mongoose.Schema({
   },
   averageMarks: Number,
   finalGrade: String,
-  status: { type: String, enum: ['pending', 'submitted', 'under_review', 'approved', 'rejected'], default: 'pending' },
+  status: { type: String, enum: ['pending', 'submitted', 'under_review', 'approved', 'rejected'], default: 'pending', index: true },
   metadata: {
     ip: String,
     userAgent: String
   }
 }, { timestamps: true });
+
+// Optimize dashboard stats and common filters
+submissionSchema.index({ userId: 1, status: 1 });
+submissionSchema.index({ schoolCode: 1, status: 1 });
 
 export const Submission = mongoose.model('Submission', submissionSchema);

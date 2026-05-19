@@ -4,7 +4,7 @@ const nominationSchema = new mongoose.Schema({
   form_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Form', required: true },
   functionary_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   teacher_name: { type: String, required: true },
-  teacher_email: { type: String, required: true },
+  teacher_email: { type: String, required: true, index: true },
   teacher_phone: { type: String },
   school_code: { type: String, required: true },
   link_type: { type: String, enum: ['otp', 'direct'], default: 'otp' },
@@ -15,6 +15,9 @@ const nominationSchema = new mongoose.Schema({
   last_reminder_at: { type: Date },
   additional_data: { type: mongoose.Schema.Types.Mixed },
 }, { timestamps: true });
+
+// Optimize dashboard stats for functionaries
+nominationSchema.index({ functionary_id: 1, status: 1 });
 
 // Generate unique token before saving
 nominationSchema.pre('save', function() {
