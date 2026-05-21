@@ -1,0 +1,3 @@
+## 2025-05-15 - Dashboard Query Optimization using $facet
+**Learning:** The dashboard statistics were previously performing over 15 sequential `countDocuments` calls, leading to high latency (~20ms even with small datasets). MongoDB aggregation with `$facet` allows grouping multiple count operations into a single database roundtrip. Combining this with `Promise.all` for parallelizing counts across different collections (Users, Forms, Submissions) significantly reduces total response time.
+**Action:** Use `$facet` for dashboard-like endpoints where multiple counts or statistics from the same collection are required. Always parallelize independent cross-collection queries using `Promise.all`.
