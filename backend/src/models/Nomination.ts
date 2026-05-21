@@ -16,6 +16,12 @@ const nominationSchema = new mongoose.Schema({
   additional_data: { type: mongoose.Schema.Types.Mixed },
 }, { timestamps: true });
 
+// Performance indexes
+nominationSchema.index({ teacher_email: 1 });
+nominationSchema.index({ functionary_id: 1 });
+nominationSchema.index({ status: 1 });
+nominationSchema.index({ school_code: 1 });
+
 // Generate unique token before saving
 nominationSchema.pre('save', function() {
   if (!this.unique_token) {
