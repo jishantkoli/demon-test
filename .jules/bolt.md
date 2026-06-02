@@ -1,0 +1,3 @@
+## 2025-05-14 - Consolidating Dashboard Stats with MongoDB Facets
+**Learning:** In the SchoolData Portal, the `getStats` controller was performing 15+ sequential `countDocuments` calls. This led to high latency due to multiple database roundtrips, especially noticeable as the dataset grows. Consolidating these into 4 parallel aggregation pipelines using `$facet` significantly reduced latency (up to 88% for some roles).
+**Action:** Always check for sequential database queries in dashboard/summary endpoints and use MongoDB aggregation pipelines or `Promise.all` to parallelize and batch requests.
