@@ -24,6 +24,8 @@ const userSchema = new mongoose.Schema({
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 
+userSchema.index({ role: 1 });
+
 // Method to compare password
 userSchema.methods.comparePassword = async function(password: string) {
   if (!this.passwordHash) return false;
