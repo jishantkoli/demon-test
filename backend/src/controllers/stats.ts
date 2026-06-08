@@ -32,39 +32,87 @@ export const getStats = async (req: AuthRequest, res: Response) => {
       // Reviewers see submissions they need to review
     }
 
-    const totalUsers = await User.countDocuments();
-    const activeForms = await Form.countDocuments({ ...formQuery, status: 'active' });
-    const draftForms = await Form.countDocuments({ ...formQuery, status: 'draft' });
-    const expiredForms = await Form.countDocuments({ ...formQuery, status: 'expired' });
-    const totalSubmissions = await Submission.countDocuments(subQuery);
-    
-    // Submissions by status
-    const submissionsByStatus = {
-      submitted: await Submission.countDocuments({ ...subQuery, status: 'submitted' }),
-      under_review: await Submission.countDocuments({ ...subQuery, status: 'under_review' }),
-      approved: await Submission.countDocuments({ ...subQuery, status: 'approved' }),
-      rejected: await Submission.countDocuments({ ...subQuery, status: 'rejected' }),
-    };
+    // Use parallel aggregation facets to reduce DB round-trips from ~15 to 4
+    const [userStats, formStats, submissionStats, nominationStats] = await Promise.all([
+      User.aggregate([
+        {
+          $facet: {
+            totalUsers: [{ $count: 'count' }],
+            usersByRole: [
+              { $group: { _id: '$role', count: { $sum: 1 } } }
+            ]
+          }
+        }
+      ]),
+      Form.aggregate([
+        { $match: formQuery },
+        {
+          $facet: {
+            activeForms: [{ $match: { status: 'active' } }, { $count: 'count' }],
+            draftForms: [{ $match: { status: 'draft' } }, { $count: 'count' }],
+            expiredForms: [{ $match: { status: 'expired' } }, { $count: 'count' }]
+          }
+        }
+      ]),
+      Submission.aggregate([
+        { $match: subQuery },
+        {
+          $facet: {
+            totalSubmissions: [{ $count: 'count' }],
+            submissionsByStatus: [
+              { $group: { _id: '$status', count: { $sum: 1 } } }
+            ]
+          }
+        }
+      ]),
+      role === 'functionary' ? Nomination.aggregate([
+        { $match: { functionary_id: userId } },
+        {
+          $facet: {
+            totalNominations: [{ $count: 'count' }],
+            nominationsByStatus: [
+              { $group: { _id: '$status', count: { $sum: 1 } } }
+            ]
+          }
+        }
+      ]) : Promise.resolve([])
+    ]);
 
-    // Users by role
+    // Map User Stats
+    const totalUsers = userStats[0]?.totalUsers[0]?.count || 0;
     const usersByRole = {
-      admin: await User.countDocuments({ role: 'admin' }),
-      reviewer: await User.countDocuments({ role: 'reviewer' }),
-      functionary: await User.countDocuments({ role: 'functionary' }),
-      teacher: await User.countDocuments({ role: 'teacher' }),
+      admin: 0,
+      reviewer: 0,
+      functionary: 0,
+      teacher: 0,
+      ...(userStats[0]?.usersByRole || []).reduce((acc: any, curr: any) => ({ ...acc, [curr._id]: curr.count }), {})
     };
 
-    // Functionary specific stats
+    // Map Form Stats
+    const activeForms = formStats[0]?.activeForms[0]?.count || 0;
+    const draftForms = formStats[0]?.draftForms[0]?.count || 0;
+    const expiredForms = formStats[0]?.expiredForms[0]?.count || 0;
+
+    // Map Submission Stats
+    const totalSubmissions = submissionStats[0]?.totalSubmissions[0]?.count || 0;
+    const submissionsByStatus = {
+      submitted: 0,
+      under_review: 0,
+      approved: 0,
+      rejected: 0,
+      ...(submissionStats[0]?.submissionsByStatus || []).reduce((acc: any, curr: any) => ({ ...acc, [curr._id]: curr.count }), {})
+    };
+
+    // Map Nomination Stats
     let totalNominations = 0;
-    let nominationsByStatus: any = {};
+    let nominationsByStatus: any = { pending: 0, invited: 0, completed: 0 };
     let completionRate = 0;
 
-    if (role === 'functionary') {
-      totalNominations = await Nomination.countDocuments({ functionary_id: userId });
+    if (role === 'functionary' && nominationStats.length > 0) {
+      totalNominations = nominationStats[0]?.totalNominations[0]?.count || 0;
       nominationsByStatus = {
-        pending: await Nomination.countDocuments({ functionary_id: userId, status: 'pending' }),
-        invited: await Nomination.countDocuments({ functionary_id: userId, status: 'invited' }),
-        completed: await Nomination.countDocuments({ functionary_id: userId, status: 'completed' }),
+        ...nominationsByStatus,
+        ...(nominationStats[0]?.nominationsByStatus || []).reduce((acc: any, curr: any) => ({ ...acc, [curr._id]: curr.count }), {})
       };
       if (totalNominations > 0) {
         completionRate = Math.round((nominationsByStatus.completed / totalNominations) * 100);
