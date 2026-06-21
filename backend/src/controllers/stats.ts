@@ -14,60 +14,92 @@ export const getStats = async (req: AuthRequest, res: Response) => {
     let formQuery: any = {};
     let subQuery: any = {};
 
-    if (role === 'admin') {
-      // Admin sees everything
-    } else if (role === 'teacher') {
+    // ⚡ Bolt Optimization: Building the initial query context
+    if (role === 'teacher' && email) {
+      // Use indexed teacher_email for faster lookup
       const nominations = await Nomination.find({ 
         teacher_email: { $regex: new RegExp(`^${email}$`, 'i') } 
-      });
+      }).select('form_id').lean();
       const assignedFormIds = nominations.map(n => n.form_id);
       formQuery._id = { $in: assignedFormIds };
-      formQuery.status = 'active';
+      formQuery.status = 'active'; // Teachers only see active forms
       subQuery.userId = userId;
     } else if (role === 'functionary') {
-      formQuery.status = 'active';
-      subQuery.schoolCode = req.user.school_code;
+      formQuery.status = 'active'; // Functionaries only see active forms
+      subQuery.schoolCode = req.user.school_code || req.user.profile?.schoolCode;
     } else if (role === 'reviewer') {
-      formQuery.status = 'active';
-      // Reviewers see submissions they need to review
+      formQuery.status = 'active'; // Reviewers only see active forms
     }
 
-    const totalUsers = await User.countDocuments();
-    const activeForms = await Form.countDocuments({ ...formQuery, status: 'active' });
-    const draftForms = await Form.countDocuments({ ...formQuery, status: 'draft' });
-    const expiredForms = await Form.countDocuments({ ...formQuery, status: 'expired' });
-    const totalSubmissions = await Submission.countDocuments(subQuery);
-    
-    // Submissions by status
-    const submissionsByStatus = {
-      submitted: await Submission.countDocuments({ ...subQuery, status: 'submitted' }),
-      under_review: await Submission.countDocuments({ ...subQuery, status: 'under_review' }),
-      approved: await Submission.countDocuments({ ...subQuery, status: 'approved' }),
-      rejected: await Submission.countDocuments({ ...subQuery, status: 'rejected' }),
-    };
+    // ⚡ Bolt Optimization: Using parallelized aggregation facets to reduce DB roundtrips from ~15 to 4.
+    const [userStats, formStats, submissionStats, nominationStats] = await Promise.all([
+      // 1. User stats (total and by role)
+      User.aggregate([
+        {
+          $facet: {
+            total: [{ $count: 'count' }],
+            byRole: [{ $group: { _id: '$role', count: { $sum: 1 } } }]
+          }
+        }
+      ]),
 
-    // Users by role
-    const usersByRole = {
-      admin: await User.countDocuments({ role: 'admin' }),
-      reviewer: await User.countDocuments({ role: 'reviewer' }),
-      functionary: await User.countDocuments({ role: 'functionary' }),
-      teacher: await User.countDocuments({ role: 'teacher' }),
-    };
+      // 2. Form stats (filtered by access)
+      Form.aggregate([
+        { $match: formQuery },
+        {
+          $facet: {
+            active: [{ $match: { status: 'active' } }, { $count: 'count' }],
+            draft: [{ $match: { status: 'draft' } }, { $count: 'count' }],
+            expired: [{ $match: { status: 'expired' } }, { $count: 'count' }]
+          }
+        }
+      ]),
 
-    // Functionary specific stats
+      // 3. Submission stats (filtered by access)
+      Submission.aggregate([
+        { $match: subQuery },
+        {
+          $facet: {
+            total: [{ $count: 'count' }],
+            byStatus: [{ $group: { _id: '$status', count: { $sum: 1 } } }]
+          }
+        }
+      ]),
+
+      // 4. Nomination stats (functionary only)
+      role === 'functionary' ? Nomination.aggregate([
+        { $match: { functionary_id: userId } },
+        {
+          $facet: {
+            total: [{ $count: 'count' }],
+            byStatus: [{ $group: { _id: '$status', count: { $sum: 1 } } }]
+          }
+        }
+      ]) : Promise.resolve(null)
+    ]);
+
+    // Extracting and formatting the results
+    const usersByRole: any = { admin: 0, reviewer: 0, functionary: 0, teacher: 0 };
+    userStats[0]?.byRole?.forEach((r: any) => { if (r._id) usersByRole[r._id] = r.count; });
+    const totalUsers = userStats[0]?.total[0]?.count || 0;
+
+    const activeForms = formStats[0]?.active[0]?.count || 0;
+    const draftForms = formStats[0]?.draft[0]?.count || 0;
+    const expiredForms = formStats[0]?.expired[0]?.count || 0;
+
+    const totalSubmissions = submissionStats[0]?.total[0]?.count || 0;
+    const submissionsByStatus: any = { submitted: 0, under_review: 0, approved: 0, rejected: 0 };
+    submissionStats[0]?.byStatus?.forEach((s: any) => { if (s._id) submissionsByStatus[s._id] = s.count; });
+
     let totalNominations = 0;
-    let nominationsByStatus: any = {};
+    let nominationsByStatus: any = { pending: 0, invited: 0, completed: 0 };
     let completionRate = 0;
 
-    if (role === 'functionary') {
-      totalNominations = await Nomination.countDocuments({ functionary_id: userId });
-      nominationsByStatus = {
-        pending: await Nomination.countDocuments({ functionary_id: userId, status: 'pending' }),
-        invited: await Nomination.countDocuments({ functionary_id: userId, status: 'invited' }),
-        completed: await Nomination.countDocuments({ functionary_id: userId, status: 'completed' }),
-      };
+    if (role === 'functionary' && nominationStats) {
+      totalNominations = nominationStats[0]?.total[0]?.count || 0;
+      nominationStats[0]?.byStatus?.forEach((n: any) => { if (n._id) nominationsByStatus[n._id] = n.count; });
       if (totalNominations > 0) {
-        completionRate = Math.round((nominationsByStatus.completed / totalNominations) * 100);
+        completionRate = Math.round(((nominationsByStatus.completed || 0) / totalNominations) * 100);
       }
     }
 
