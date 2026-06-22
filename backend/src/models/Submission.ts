@@ -48,4 +48,11 @@ const submissionSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
+// Performance Indexes
+submissionSchema.index({ formId: 1 });
+submissionSchema.index({ userId: 1 });
+submissionSchema.index({ schoolCode: 1 });
+// Compound index for common dashboard queries (also covers status-only queries)
+submissionSchema.index({ status: 1, schoolCode: 1 });
+
 export const Submission = mongoose.model('Submission', submissionSchema);
