@@ -23,4 +23,11 @@ nominationSchema.pre('save', function() {
   }
 });
 
+// Performance indexes
+nominationSchema.index({ functionary_id: 1 });
+nominationSchema.index({ form_id: 1 });
+nominationSchema.index({ teacher_email: 1 });
+nominationSchema.index({ status: 1 });
+nominationSchema.index({ functionary_id: 1, status: 1 });
+
 export const Nomination = mongoose.model('Nomination', nominationSchema);
