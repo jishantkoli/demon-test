@@ -48,4 +48,11 @@ const submissionSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
+// BOLT OPTIMIZATION: Indexes for frequently queried fields in dashboard and search
+submissionSchema.index({ status: 1 });
+submissionSchema.index({ schoolCode: 1 });
+submissionSchema.index({ userId: 1 });
+submissionSchema.index({ userEmail: 1 });
+submissionSchema.index({ formId: 1 });
+
 export const Submission = mongoose.model('Submission', submissionSchema);
