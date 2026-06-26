@@ -54,4 +54,8 @@ const formSchema = new mongoose.Schema({
   settings: mongoose.Schema.Types.Mixed
 }, { timestamps: true });
 
+// BOLT OPTIMIZATION: Index for dashboard stats filtering
+formSchema.index({ status: 1 });
+formSchema.index({ adminId: 1 });
+
 export const Form = mongoose.model('Form', formSchema);
