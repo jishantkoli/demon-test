@@ -16,10 +16,16 @@ const nominationSchema = new mongoose.Schema({
   additional_data: { type: mongoose.Schema.Types.Mixed },
 }, { timestamps: true });
 
-// Generate unique token before saving
+nominationSchema.index({ functionary_id: 1 });
+nominationSchema.index({ teacher_email: 1 });
+
+// Generate unique token and normalize email before saving
 nominationSchema.pre('save', function() {
   if (!this.unique_token) {
     this.unique_token = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  }
+  if (this.teacher_email) {
+    this.teacher_email = this.teacher_email.toLowerCase().trim();
   }
 });
 
