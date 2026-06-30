@@ -48,4 +48,14 @@ const submissionSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
+submissionSchema.index({ userEmail: 1 });
+submissionSchema.index({ formId: 1 });
+submissionSchema.index({ createdAt: -1 });
+
+submissionSchema.pre('save', function() {
+  if (this.userEmail) {
+    this.userEmail = this.userEmail.toLowerCase().trim();
+  }
+});
+
 export const Submission = mongoose.model('Submission', submissionSchema);

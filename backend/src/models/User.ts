@@ -24,6 +24,12 @@ const userSchema = new mongoose.Schema({
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 
+userSchema.pre('save', function() {
+  if (this.email) {
+    this.email = this.email.toLowerCase().trim();
+  }
+});
+
 // Method to compare password
 userSchema.methods.comparePassword = async function(password: string) {
   if (!this.passwordHash) return false;

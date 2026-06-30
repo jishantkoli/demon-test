@@ -246,44 +246,52 @@ export const getSubmissions = async (req: AuthRequest, res: Response) => {
     const { formId, form_id, user_id, user_email } = req.query;
     const actualFormId = formId || form_id;
     const query: any = {};
+
+    // Normalize user_email for exact match
+    const normalizedUserEmail = user_email ? String(user_email).toLowerCase().trim() : null;
+
     if (actualFormId) {
       if (actualFormId.toString().match(/^[0-9a-fA-F]{24}$/)) {
         query.formId = actualFormId;
       } else {
-        const f = await Form.findOne({ shareableLink: actualFormId as string });
+        const f = await Form.findOne({ shareableLink: actualFormId as string }).select('_id').lean();
         if (f) query.formId = f._id;
         else return res.status(200).json([]); // Form not found, so no submissions
       }
     }
     if (user_id) query.userId = user_id;
-    if (user_email) query.userEmail = { $regex: new RegExp(`^${user_email}$`, 'i') };
+    if (normalizedUserEmail) query.userEmail = normalizedUserEmail;
 
     if (req.user) {
+      const userEmail = req.user.email?.toLowerCase().trim();
       if (req.user.role === 'teacher') {
         // Teachers see submissions matching their ID OR their email
         query.$or = [
           { userId: req.user._id },
-          { userEmail: { $regex: new RegExp(`^${req.user.email}$`, 'i') } }
+          { userEmail: userEmail }
         ];
       } else if (req.user.role === 'functionary') {
         // Functionaries see submissions for teachers they nominated
-        const myNominations = await Nomination.find({ functionary_id: req.user._id });
+        // Use .select and .lean for performance
+        const myNominations = await Nomination.find({ functionary_id: req.user._id })
+          .select('teacher_email')
+          .lean();
         const teacherEmails = myNominations.map(n => n.teacher_email);
-        query.userEmail = { $in: teacherEmails.map(email => new RegExp(`^${email}$`, 'i')) };
+        query.userEmail = { $in: teacherEmails };
       }
     } else {
       // For truly anonymous requests (before OTP), we can only filter by email if provided
       // and only if the form is found. But to be safe, we only allow this if user_email is explicitly requested.
-      if (!user_email) return res.status(200).json([]);
-      query.userEmail = { $regex: new RegExp(`^${user_email}$`, 'i') };
+      if (!normalizedUserEmail) return res.status(200).json([]);
+      query.userEmail = normalizedUserEmail;
     }
 
     const submissions = await Submission.find(query)
       .populate('nominationId')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
       
-    const mapped = submissions.map(s => {
-      const obj = s.toObject();
+    const mapped = submissions.map((obj: any) => {
       return {
         ...obj,
         id: obj._id,
