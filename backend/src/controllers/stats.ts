@@ -32,39 +32,67 @@ export const getStats = async (req: AuthRequest, res: Response) => {
       // Reviewers see submissions they need to review
     }
 
-    const totalUsers = await User.countDocuments();
-    const activeForms = await Form.countDocuments({ ...formQuery, status: 'active' });
-    const draftForms = await Form.countDocuments({ ...formQuery, status: 'draft' });
-    const expiredForms = await Form.countDocuments({ ...formQuery, status: 'expired' });
-    const totalSubmissions = await Submission.countDocuments(subQuery);
+    // Parallelize all count operations to reduce total latency from N round-trips to ~1 round-trip
+    const [
+      totalUsers,
+      formStats,
+      submissionStats,
+      submissionStatusStats,
+      userRoleStats,
+      nominationStats
+    ] = await Promise.all([
+      User.countDocuments(),
+      Form.aggregate([
+        { $match: formQuery },
+        { $group: { _id: '$status', count: { $sum: 1 } } }
+      ]),
+      Submission.countDocuments(subQuery),
+      Submission.aggregate([
+        { $match: subQuery },
+        { $group: { _id: '$status', count: { $sum: 1 } } }
+      ]),
+      User.aggregate([
+        { $group: { _id: '$role', count: { $sum: 1 } } }
+      ]),
+      role === 'functionary'
+        ? Nomination.aggregate([
+            { $match: { functionary_id: userId } },
+            { $group: { _id: '$status', count: { $sum: 1 } } }
+          ])
+        : Promise.resolve([])
+    ]);
+
+    // Map aggregation results back to the expected object structure
+    const getCount = (stats: any[], id: string) => stats.find(s => s._id === id)?.count || 0;
+
+    const activeForms = getCount(formStats, 'active');
+    const draftForms = getCount(formStats, 'draft');
+    const expiredForms = getCount(formStats, 'expired');
     
-    // Submissions by status
     const submissionsByStatus = {
-      submitted: await Submission.countDocuments({ ...subQuery, status: 'submitted' }),
-      under_review: await Submission.countDocuments({ ...subQuery, status: 'under_review' }),
-      approved: await Submission.countDocuments({ ...subQuery, status: 'approved' }),
-      rejected: await Submission.countDocuments({ ...subQuery, status: 'rejected' }),
+      submitted: getCount(submissionStatusStats, 'submitted'),
+      under_review: getCount(submissionStatusStats, 'under_review'),
+      approved: getCount(submissionStatusStats, 'approved'),
+      rejected: getCount(submissionStatusStats, 'rejected'),
     };
 
-    // Users by role
     const usersByRole = {
-      admin: await User.countDocuments({ role: 'admin' }),
-      reviewer: await User.countDocuments({ role: 'reviewer' }),
-      functionary: await User.countDocuments({ role: 'functionary' }),
-      teacher: await User.countDocuments({ role: 'teacher' }),
+      admin: getCount(userRoleStats, 'admin'),
+      reviewer: getCount(userRoleStats, 'reviewer'),
+      functionary: getCount(userRoleStats, 'functionary'),
+      teacher: getCount(userRoleStats, 'teacher'),
     };
 
-    // Functionary specific stats
     let totalNominations = 0;
     let nominationsByStatus: any = {};
     let completionRate = 0;
 
     if (role === 'functionary') {
-      totalNominations = await Nomination.countDocuments({ functionary_id: userId });
+      totalNominations = nominationStats.reduce((acc: number, s: any) => acc + s.count, 0);
       nominationsByStatus = {
-        pending: await Nomination.countDocuments({ functionary_id: userId, status: 'pending' }),
-        invited: await Nomination.countDocuments({ functionary_id: userId, status: 'invited' }),
-        completed: await Nomination.countDocuments({ functionary_id: userId, status: 'completed' }),
+        pending: getCount(nominationStats, 'pending'),
+        invited: getCount(nominationStats, 'invited'),
+        completed: getCount(nominationStats, 'completed'),
       };
       if (totalNominations > 0) {
         completionRate = Math.round((nominationsByStatus.completed / totalNominations) * 100);
@@ -76,7 +104,7 @@ export const getStats = async (req: AuthRequest, res: Response) => {
       activeForms,
       draftForms,
       expiredForms,
-      totalSubmissions,
+      totalSubmissions: submissionStats,
       submissionsByStatus,
       usersByRole,
       totalNominations,
