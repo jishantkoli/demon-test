@@ -1,0 +1,3 @@
+## 2025-05-15 - Parallelizing Dashboard Statistics
+**Learning:** Sequential database queries (e.g., 15+ `countDocuments` calls) in a single controller action create a significant performance bottleneck due to cumulative network roundtrip latency. Consolidating these into parallelized MongoDB aggregation pipelines using `Promise.all` and `$group` can reduce latency by ~90%.
+**Action:** Always identify sequential database calls in dashboard or stats endpoints and parallelize them. When refactoring to aggregations, ensure that base query filters are not overly restrictive (e.g., don't hardcode `status: 'active'` if the endpoint needs to count other statuses too) to avoid functional regressions.
