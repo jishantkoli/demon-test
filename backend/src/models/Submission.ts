@@ -1,13 +1,13 @@
 import mongoose from 'mongoose';
 
 const submissionSchema = new mongoose.Schema({
-  formId: { type: mongoose.Schema.Types.ObjectId, ref: 'Form', required: true },
-  nominationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Nomination' },
-  nominationToken: String,
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  formId: { type: mongoose.Schema.Types.ObjectId, ref: 'Form', required: true, index: true },
+  nominationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Nomination', index: true },
+  nominationToken: { type: String, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true },
   userName: String,
-  userEmail: String,
-   schoolCode: String,
+  userEmail: { type: String, index: true },
+   schoolCode: { type: String, index: true },
    formTitle: String,
   isDraft: { type: Boolean, default: false },
   responses: [{
@@ -41,7 +41,7 @@ const submissionSchema = new mongoose.Schema({
   },
   averageMarks: Number,
   finalGrade: String,
-  status: { type: String, enum: ['pending', 'submitted', 'under_review', 'approved', 'rejected'], default: 'pending' },
+  status: { type: String, enum: ['pending', 'submitted', 'under_review', 'approved', 'rejected'], default: 'pending', index: true },
   metadata: {
     ip: String,
     userAgent: String
