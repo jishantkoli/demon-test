@@ -26,63 +26,98 @@ export const getStats = async (req: AuthRequest, res: Response) => {
       subQuery.userId = userId;
     } else if (role === 'functionary') {
       formQuery.status = 'active';
-      subQuery.schoolCode = req.user.school_code;
+      subQuery.schoolCode = req.user.profile?.schoolCode || req.user.school_code;
     } else if (role === 'reviewer') {
       formQuery.status = 'active';
       // Reviewers see submissions they need to review
     }
 
-    const totalUsers = await User.countDocuments();
-    const activeForms = await Form.countDocuments({ ...formQuery, status: 'active' });
-    const draftForms = await Form.countDocuments({ ...formQuery, status: 'draft' });
-    const expiredForms = await Form.countDocuments({ ...formQuery, status: 'expired' });
-    const totalSubmissions = await Submission.countDocuments(subQuery);
-    
-    // Submissions by status
-    const submissionsByStatus = {
-      submitted: await Submission.countDocuments({ ...subQuery, status: 'submitted' }),
-      under_review: await Submission.countDocuments({ ...subQuery, status: 'under_review' }),
-      approved: await Submission.countDocuments({ ...subQuery, status: 'approved' }),
-      rejected: await Submission.countDocuments({ ...subQuery, status: 'rejected' }),
+    // Parallelize independent counts using aggregation $facet for maximum efficiency
+    const { status: _formStatus, ...baseFormQuery } = formQuery;
+    const [counts, submissionStats, userStats, nominationStats] = await Promise.all([
+      Form.aggregate([
+        { $match: baseFormQuery },
+        {
+          $facet: {
+            active: [{ $match: { status: 'active' } }, { $count: 'count' }],
+            draft: [{ $match: { status: 'draft' } }, { $count: 'count' }],
+            expired: [{ $match: { status: 'expired' } }, { $count: 'count' }]
+          }
+        }
+      ]),
+      Submission.aggregate([
+        { $match: subQuery },
+        {
+          $facet: {
+            total: [{ $count: 'count' }],
+            submitted: [{ $match: { status: 'submitted' } }, { $count: 'count' }],
+            under_review: [{ $match: { status: 'under_review' } }, { $count: 'count' }],
+            approved: [{ $match: { status: 'approved' } }, { $count: 'count' }],
+            rejected: [{ $match: { status: 'rejected' } }, { $count: 'count' }]
+          }
+        }
+      ]),
+      User.aggregate([
+        {
+          $facet: {
+            total: [{ $count: 'count' }],
+            admin: [{ $match: { role: 'admin' } }, { $count: 'count' }],
+            reviewer: [{ $match: { role: 'reviewer' } }, { $count: 'count' }],
+            functionary: [{ $match: { role: 'functionary' } }, { $count: 'count' }],
+            teacher: [{ $match: { role: 'teacher' } }, { $count: 'count' }]
+          }
+        }
+      ]),
+      role === 'functionary' ? Nomination.aggregate([
+        { $match: { functionary_id: userId } },
+        {
+          $facet: {
+            total: [{ $count: 'count' }],
+            pending: [{ $match: { status: 'pending' } }, { $count: 'count' }],
+            invited: [{ $match: { status: 'invited' } }, { $count: 'count' }],
+            completed: [{ $match: { status: 'completed' } }, { $count: 'count' }]
+          }
+        }
+      ]) : Promise.resolve(null)
+    ]);
+
+    const formCounts = counts[0];
+    const subCounts = submissionStats[0];
+    const uCounts = userStats[0];
+    const nCounts = nominationStats ? nominationStats[0] : null;
+
+    const stats = {
+      totalUsers: uCounts.total[0]?.count || 0,
+      activeForms: formCounts.active[0]?.count || 0,
+      draftForms: formCounts.draft[0]?.count || 0,
+      expiredForms: formCounts.expired[0]?.count || 0,
+      totalSubmissions: subCounts.total[0]?.count || 0,
+      submissionsByStatus: {
+        submitted: subCounts.submitted[0]?.count || 0,
+        under_review: subCounts.under_review[0]?.count || 0,
+        approved: subCounts.approved[0]?.count || 0,
+        rejected: subCounts.rejected[0]?.count || 0,
+      },
+      usersByRole: {
+        admin: uCounts.admin[0]?.count || 0,
+        reviewer: uCounts.reviewer[0]?.count || 0,
+        functionary: uCounts.functionary[0]?.count || 0,
+        teacher: uCounts.teacher[0]?.count || 0,
+      },
+      totalNominations: nCounts?.total[0]?.count || 0,
+      nominationsByStatus: nCounts ? {
+        pending: nCounts.pending[0]?.count || 0,
+        invited: nCounts.invited[0]?.count || 0,
+        completed: nCounts.completed[0]?.count || 0,
+      } : {},
+      completionRate: 0
     };
 
-    // Users by role
-    const usersByRole = {
-      admin: await User.countDocuments({ role: 'admin' }),
-      reviewer: await User.countDocuments({ role: 'reviewer' }),
-      functionary: await User.countDocuments({ role: 'functionary' }),
-      teacher: await User.countDocuments({ role: 'teacher' }),
-    };
-
-    // Functionary specific stats
-    let totalNominations = 0;
-    let nominationsByStatus: any = {};
-    let completionRate = 0;
-
-    if (role === 'functionary') {
-      totalNominations = await Nomination.countDocuments({ functionary_id: userId });
-      nominationsByStatus = {
-        pending: await Nomination.countDocuments({ functionary_id: userId, status: 'pending' }),
-        invited: await Nomination.countDocuments({ functionary_id: userId, status: 'invited' }),
-        completed: await Nomination.countDocuments({ functionary_id: userId, status: 'completed' }),
-      };
-      if (totalNominations > 0) {
-        completionRate = Math.round((nominationsByStatus.completed / totalNominations) * 100);
-      }
+    if (stats.totalNominations > 0) {
+      stats.completionRate = Math.round((stats.nominationsByStatus.completed / stats.totalNominations) * 100);
     }
 
-    res.status(200).json({
-      totalUsers,
-      activeForms,
-      draftForms,
-      expiredForms,
-      totalSubmissions,
-      submissionsByStatus,
-      usersByRole,
-      totalNominations,
-      nominationsByStatus,
-      completionRate
-    });
+    res.status(200).json(stats);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
