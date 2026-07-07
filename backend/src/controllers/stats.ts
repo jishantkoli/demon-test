@@ -19,53 +19,104 @@ export const getStats = async (req: AuthRequest, res: Response) => {
     } else if (role === 'teacher') {
       const nominations = await Nomination.find({ 
         teacher_email: { $regex: new RegExp(`^${email}$`, 'i') } 
-      });
+      }).lean();
       const assignedFormIds = nominations.map(n => n.form_id);
       formQuery._id = { $in: assignedFormIds };
-      formQuery.status = 'active';
       subQuery.userId = userId;
     } else if (role === 'functionary') {
-      formQuery.status = 'active';
-      subQuery.schoolCode = req.user.school_code;
+      subQuery.schoolCode = req.user.school_code || req.user.profile?.schoolCode;
     } else if (role === 'reviewer') {
-      formQuery.status = 'active';
-      // Reviewers see submissions they need to review
+      // Reviewers see active forms
     }
 
-    const totalUsers = await User.countDocuments();
-    const activeForms = await Form.countDocuments({ ...formQuery, status: 'active' });
-    const draftForms = await Form.countDocuments({ ...formQuery, status: 'draft' });
-    const expiredForms = await Form.countDocuments({ ...formQuery, status: 'expired' });
-    const totalSubmissions = await Submission.countDocuments(subQuery);
-    
-    // Submissions by status
+    // Parallelize database queries to reduce total response time
+    const [
+      totalUsers,
+      formStats,
+      submissionStats,
+      userRoleStats,
+      nominationStats
+    ] = await Promise.all([
+      User.countDocuments(),
+      // Group form counts by status in one query
+      Form.aggregate([
+        { $match: formQuery },
+        { $group: { _id: '$status', count: { $sum: 1 } } }
+      ]),
+      // Group submission counts by status in one query
+      Submission.aggregate([
+        { $match: subQuery },
+        { $group: { _id: '$status', count: { $sum: 1 } } }
+      ]),
+      // Group user counts by role in one query
+      User.aggregate([
+        { $group: { _id: '$role', count: { $sum: 1 } } }
+      ]),
+      // Functionary specific nomination stats
+      role === 'functionary'
+        ? Nomination.aggregate([
+            { $match: { functionary_id: userId } },
+            { $group: { _id: '$status', count: { $sum: 1 } } }
+          ])
+        : Promise.resolve([])
+    ]);
+
+    // Map form stats
+    const formCounts = formStats.reduce((acc: any, curr: any) => {
+      acc[curr._id] = curr.count;
+      return acc;
+    }, {});
+
+    const activeForms = formCounts.active || 0;
+    const draftForms = formCounts.draft || 0;
+    const expiredForms = formCounts.expired || 0;
+
+    // Map submission stats
+    const subCounts = submissionStats.reduce((acc: any, curr: any) => {
+      acc[curr._id] = curr.count;
+      return acc;
+    }, {});
+
     const submissionsByStatus = {
-      submitted: await Submission.countDocuments({ ...subQuery, status: 'submitted' }),
-      under_review: await Submission.countDocuments({ ...subQuery, status: 'under_review' }),
-      approved: await Submission.countDocuments({ ...subQuery, status: 'approved' }),
-      rejected: await Submission.countDocuments({ ...subQuery, status: 'rejected' }),
+      submitted: subCounts.submitted || 0,
+      under_review: subCounts.under_review || 0,
+      approved: subCounts.approved || 0,
+      rejected: subCounts.rejected || 0,
     };
 
-    // Users by role
+    const totalSubmissions = Object.values(subCounts).reduce((a: number, b: any) => a + (b as number), 0);
+
+    // Map user role stats
+    const userRoleCounts = userRoleStats.reduce((acc: any, curr: any) => {
+      acc[curr._id] = curr.count;
+      return acc;
+    }, {});
+
     const usersByRole = {
-      admin: await User.countDocuments({ role: 'admin' }),
-      reviewer: await User.countDocuments({ role: 'reviewer' }),
-      functionary: await User.countDocuments({ role: 'functionary' }),
-      teacher: await User.countDocuments({ role: 'teacher' }),
+      admin: userRoleCounts.admin || 0,
+      reviewer: userRoleCounts.reviewer || 0,
+      functionary: userRoleCounts.functionary || 0,
+      teacher: userRoleCounts.teacher || 0,
     };
 
-    // Functionary specific stats
+    // Map nomination stats
     let totalNominations = 0;
     let nominationsByStatus: any = {};
     let completionRate = 0;
 
     if (role === 'functionary') {
-      totalNominations = await Nomination.countDocuments({ functionary_id: userId });
+      const nomCounts = nominationStats.reduce((acc: any, curr: any) => {
+        acc[curr._id] = curr.count;
+        return acc;
+      }, {});
+
       nominationsByStatus = {
-        pending: await Nomination.countDocuments({ functionary_id: userId, status: 'pending' }),
-        invited: await Nomination.countDocuments({ functionary_id: userId, status: 'invited' }),
-        completed: await Nomination.countDocuments({ functionary_id: userId, status: 'completed' }),
+        pending: nomCounts.pending || 0,
+        invited: nomCounts.invited || 0,
+        completed: nomCounts.completed || 0,
       };
+
+      totalNominations = Object.values(nomCounts).reduce((a: number, b: any) => a + (b as number), 0);
       if (totalNominations > 0) {
         completionRate = Math.round((nominationsByStatus.completed / totalNominations) * 100);
       }
