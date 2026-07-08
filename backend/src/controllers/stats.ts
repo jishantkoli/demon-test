@@ -26,32 +26,57 @@ export const getStats = async (req: AuthRequest, res: Response) => {
       subQuery.userId = userId;
     } else if (role === 'functionary') {
       formQuery.status = 'active';
-      subQuery.schoolCode = req.user.school_code;
+      subQuery.schoolCode = req.user.profile?.schoolCode || req.user.school_code;
     } else if (role === 'reviewer') {
       formQuery.status = 'active';
       // Reviewers see submissions they need to review
     }
 
-    const totalUsers = await User.countDocuments();
-    const activeForms = await Form.countDocuments({ ...formQuery, status: 'active' });
-    const draftForms = await Form.countDocuments({ ...formQuery, status: 'draft' });
-    const expiredForms = await Form.countDocuments({ ...formQuery, status: 'expired' });
-    const totalSubmissions = await Submission.countDocuments(subQuery);
-    
+    // Parallelize core statistics queries
+    const [
+      totalUsers,
+      activeForms,
+      draftForms,
+      expiredForms,
+      totalSubmissions,
+      subSubmitted,
+      subUnderReview,
+      subApproved,
+      subRejected,
+      userAdmin,
+      userReviewer,
+      userFunctionary,
+      userTeacher
+    ] = await Promise.all([
+      User.countDocuments(),
+      Form.countDocuments({ ...formQuery, status: 'active' }),
+      Form.countDocuments({ ...formQuery, status: 'draft' }),
+      Form.countDocuments({ ...formQuery, status: 'expired' }),
+      Submission.countDocuments(subQuery),
+      Submission.countDocuments({ ...subQuery, status: 'submitted' }),
+      Submission.countDocuments({ ...subQuery, status: 'under_review' }),
+      Submission.countDocuments({ ...subQuery, status: 'approved' }),
+      Submission.countDocuments({ ...subQuery, status: 'rejected' }),
+      User.countDocuments({ role: 'admin' }),
+      User.countDocuments({ role: 'reviewer' }),
+      User.countDocuments({ role: 'functionary' }),
+      User.countDocuments({ role: 'teacher' }),
+    ]);
+
     // Submissions by status
     const submissionsByStatus = {
-      submitted: await Submission.countDocuments({ ...subQuery, status: 'submitted' }),
-      under_review: await Submission.countDocuments({ ...subQuery, status: 'under_review' }),
-      approved: await Submission.countDocuments({ ...subQuery, status: 'approved' }),
-      rejected: await Submission.countDocuments({ ...subQuery, status: 'rejected' }),
+      submitted: subSubmitted,
+      under_review: subUnderReview,
+      approved: subApproved,
+      rejected: subRejected,
     };
 
     // Users by role
     const usersByRole = {
-      admin: await User.countDocuments({ role: 'admin' }),
-      reviewer: await User.countDocuments({ role: 'reviewer' }),
-      functionary: await User.countDocuments({ role: 'functionary' }),
-      teacher: await User.countDocuments({ role: 'teacher' }),
+      admin: userAdmin,
+      reviewer: userReviewer,
+      functionary: userFunctionary,
+      teacher: userTeacher,
     };
 
     // Functionary specific stats
@@ -60,14 +85,26 @@ export const getStats = async (req: AuthRequest, res: Response) => {
     let completionRate = 0;
 
     if (role === 'functionary') {
-      totalNominations = await Nomination.countDocuments({ functionary_id: userId });
+      const [
+        nomTotal,
+        nomPending,
+        nomInvited,
+        nomCompleted
+      ] = await Promise.all([
+        Nomination.countDocuments({ functionary_id: userId }),
+        Nomination.countDocuments({ functionary_id: userId, status: 'pending' }),
+        Nomination.countDocuments({ functionary_id: userId, status: 'invited' }),
+        Nomination.countDocuments({ functionary_id: userId, status: 'completed' }),
+      ]);
+
+      totalNominations = nomTotal;
       nominationsByStatus = {
-        pending: await Nomination.countDocuments({ functionary_id: userId, status: 'pending' }),
-        invited: await Nomination.countDocuments({ functionary_id: userId, status: 'invited' }),
-        completed: await Nomination.countDocuments({ functionary_id: userId, status: 'completed' }),
+        pending: nomPending,
+        invited: nomInvited,
+        completed: nomCompleted,
       };
       if (totalNominations > 0) {
-        completionRate = Math.round((nominationsByStatus.completed / totalNominations) * 100);
+        completionRate = Math.round((nomCompleted / totalNominations) * 100);
       }
     }
 
